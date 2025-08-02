@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Stitching - Python API</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+        .header p {
+            font-size: 1.2em;
+            opacity: 0.9;
+        }
+        .controls {
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+        .btn {
+            background: #667eea;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        .btn:hover {
+            background: #5a6fd8;
+            transform: translateY(-2px);
+        }
+        .btn:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .btn.success {
+            background: #28a745;
+        }
+        .btn.danger {
+            background: #dc3545;
+        }
+        .btn.warning {
+            background: #ffc107;
+            color: #333;
+        }
+        .status {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+            padding: 20px;
+            margin: 20px 0;
+            text-align: left;
+        }
+        .status h3 {
+            margin-top: 0;
+            color: #333;
+        }
+        .status-item {
+            display: flex;
+            justify-content: space-between;
+            margin: 10px 0;
+            padding: 8px 0;
+            border-bottom: 1px solid #eee;
+        }
+        .status-label {
+            font-weight: bold;
+            color: #555;
+        }
+        .status-value {
+            color: #333;
+        }
+        .status-value.success {
+            color: #28a745;
+        }
+        .status-value.error {
+            color: #dc3545;
+        }
+        .video-container {
+            background: #000;
+            border-radius: 15px;
+            overflow: hidden;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            margin-bottom: 30px;
+        }
+        .video-feed {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        .api-info {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: 10px;
+            padding: 20px;
+            margin-top: 20px;
+        }
+        .api-info h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        .api-endpoint {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 10px 0;
+            border-left: 4px solid #667eea;
+            font-family: 'Courier New', monospace;
+        }
+        .api-endpoint .method {
+            color: #667eea;
+            font-weight: bold;
+        }
+        .api-endpoint .url {
+            color: #333;
+        }
+        .api-endpoint .description {
+            color: #666;
+            font-size: 0.9em;
+            margin-top: 5px;
+        }
+        .python-example {
+            background: #2d3748;
+            color: #e2e8f0;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 15px 0;
+            font-family: 'Courier New', monospace;
+            overflow-x: auto;
+        }
+        .python-example .comment {
+            color: #a0aec0;
+        }
+        .python-example .keyword {
+            color: #f6ad55;
+        }
+        .python-example .string {
+            color: #68d391;
+        }
+        .python-example .function {
+            color: #63b3ed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎥 Camera Stitching</h1>
+            <p>Static homography stitching with Python API access</p>
+        </div>
+        
+        <div class="controls">
+            <h3>🎮 Stitching Controls</h3>
+            <button id="startBtn" class="btn success">▶️ Start Stitching</button>
+            <button id="stopBtn" class="btn danger" disabled>⏹️ Stop Stitching</button>
+            <button id="resetBtn" class="btn warning">🔄 Reset Homography</button>
+            <a href="/" class="btn">🏠 Back to Home</a>
+        </div>
+        
+        <div class="status">
+            <h3>📊 Status</h3>
+            <div class="status-item">
+                <span class="status-label">Stitching Enabled:</span>
+                <span id="enabledStatus" class="status-value">❌</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Homography Locked:</span>
+                <span id="lockedStatus" class="status-value">❌</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Camera 0:</span>
+                <span id="camera0Status" class="status-value">❌</span>
+            </div>
+            <div class="status-item">
+                <span class="status-label">Camera 1:</span>
+                <span id="camera1Status" class="status-value">❌</span>
+            </div>
+        </div>
+        
+        <div class="video-container">
+            <img id="video-feed" class="video-feed" 
+                 src="/api/stitched/stream" 
+                 alt="Stitched Camera Stream"
+                 onload="hideLoading()"
+                 onerror="showError()">
+        </div>
+        
+        <div id="loading" style="text-align: center; color: white; font-size: 1.2em;">
+            <div style="border: 4px solid rgba(255,255,255,0.3); border-top: 4px solid white; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 20px;"></div>
+            <div>Loading stitched stream...</div>
+        </div>
+        
+        <div id="error" style="display: none; text-align: center; background: rgba(255,0,0,0.9); color: white; padding: 20px; border-radius: 10px; margin: 20px 0;">
+            <h3>⚠️ Stitching Not Available</h3>
+            <p>Please start stitching first or check camera connections.</p>
+        </div>
+        
+        <div class="api-info">
+            <h3>🔗 Python API Access</h3>
+            <p>Use these endpoints to access stitched frames from your Python code:</p>
+            
+            <div class="api-endpoint">
+                <div><span class="method">GET</span> <span class="url">/api/frame/stitched</span></div>
+                <div class="description">Get a single stitched frame as base64-encoded JPEG</div>
+            </div>
+            
+            <div class="api-endpoint">
+                <div><span class="method">GET</span> <span class="url">/api/stitched/stream</span></div>
+                <div class="description">Get continuous MJPEG stream of stitched cameras</div>
+            </div>
+            
+            <div class="api-endpoint">
+                <div><span class="method">GET</span> <span class="url">/api/stitch/status</span></div>
+                <div class="description">Get current stitching status and camera availability</div>
+            </div>
+            
+            <h4 style="margin-top: 30px;">🐍 Python Example Code:</h4>
+            <div class="python-example">
+<span class="comment"># Example: Get stitched frames from Python</span>
+<span class="keyword">import</span> requests
+<span class="keyword">import</span> cv2
+<span class="keyword">import</span> numpy <span class="keyword">as</span> np
+<span class="keyword">import</span> base64
+
+<span class="comment"># Get a single stitched frame</span>
+response = requests.get(<span class="string">'http://localhost:5000/api/frame/stitched'</span>)
+<span class="keyword">if</span> response.status_code == 200:
+    data = response.json()
+    frame_data = data[<span class="string">'frame'</span>].split(<span class="string">','</span>)[1]
+    frame_bytes = base64.b64decode(frame_data)
+    frame = cv2.imdecode(np.frombuffer(frame_bytes, np.uint8), cv2.IMREAD_COLOR)
+    
+    <span class="comment"># Process the stitched frame</span>
+    cv2.imshow(<span class="string">'Stitched Frame'</span>, frame)
+    cv2.waitKey(1)
+
+<span class="comment"># Get stitching status</span>
+status = requests.get(<span class="string">'http://localhost:5000/api/stitch/status'</span>).json()
+<span class="keyword">print</span>(<span class="string">f"Stitching enabled: {status['enabled']}"</span>)
+<span class="keyword">print</span>(<span class="string">f"Homography locked: {status['locked']}"</span>)
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let stitchingEnabled = false;
+        
+        function updateStatus() {
+            fetch('/api/stitch/status')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('enabledStatus').textContent = data.enabled ? '✅' : '❌';
+                    document.getElementById('lockedStatus').textContent = data.locked ? '✅' : '❌';
+                    document.getElementById('camera0Status').textContent = data.camera_0_available ? '✅' : '❌';
+                    document.getElementById('camera1Status').textContent = data.camera_1_available ? '✅' : '❌';
+                    
+                    // Update button states
+                    document.getElementById('startBtn').disabled = data.enabled;
+                    document.getElementById('stopBtn').disabled = !data.enabled;
+                    
+                    stitchingEnabled = data.enabled;
+                })
+                .catch(error => console.error('Error fetching status:', error));
+        }
+        
+        function startStitching() {
+            fetch('/api/stitch/start', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'started') {
+                        updateStatus();
+                        console.log('Stitching started');
+                    } else {
+                        alert('Error: ' + data.error);
+                    }
+                })
+                .catch(error => console.error('Error starting stitching:', error));
+        }
+        
+        function stopStitching() {
+            fetch('/api/stitch/stop', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'stopped') {
+                        updateStatus();
+                        console.log('Stitching stopped');
+                    }
+                })
+                .catch(error => console.error('Error stopping stitching:', error));
+        }
+        
+        function resetStitching() {
+            fetch('/api/stitch/reset', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.status === 'reset') {
+                        updateStatus();
+                        console.log('Homography reset');
+                    }
+                })
+                .catch(error => console.error('Error resetting stitching:', error));
+        }
+        
+        function hideLoading() {
+            document.getElementById('loading').style.display = 'none';
+        }
+        
+        function showError() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('error').style.display = 'block';
+        }
+        
+        // Event listeners
+        document.getElementById('startBtn').addEventListener('click', startStitching);
+        document.getElementById('stopBtn').addEventListener('click', stopStitching);
+        document.getElementById('resetBtn').addEventListener('click', resetStitching);
+        
+        // Initial status update
+        updateStatus();
+        
+        // Update status every 2 seconds
+        setInterval(updateStatus, 2000);
+        
+        // CSS animation for loading spinner
+        const style = document.createElement('style');
+        style.textContent = `
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+        `;
+        document.head.appendChild(style);
+    </script>
+</body>
+</html> 
