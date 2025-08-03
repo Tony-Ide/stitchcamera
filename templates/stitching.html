@@ -70,6 +70,15 @@
             background: #ffc107;
             color: #333;
         }
+        .btn.recording {
+            background: #dc3545;
+            animation: pulse 1s infinite;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.7; }
+            100% { opacity: 1; }
+        }
         .status {
             background: rgba(255, 255, 255, 0.9);
             border-radius: 10px;
@@ -102,67 +111,86 @@
             color: #dc3545;
         }
         .video-container {
-            background: #000;
-            border-radius: 15px;
-            overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            margin-bottom: 30px;
+            text-align: center;
+            margin: 20px 0;
         }
         .video-feed {
-            width: 100%;
+            max-width: 100%;
             height: auto;
-            display: block;
+            border-radius: 10px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
         }
         .api-info {
-            background: rgba(255, 255, 255, 0.9);
-            border-radius: 10px;
-            padding: 20px;
-            margin-top: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 15px;
+            padding: 25px;
+            margin-top: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
         }
         .api-info h3 {
             color: #333;
-            margin-bottom: 15px;
+            margin-top: 0;
         }
         .api-endpoint {
             background: #f8f9fa;
-            padding: 15px;
             border-radius: 8px;
+            padding: 15px;
             margin: 10px 0;
             border-left: 4px solid #667eea;
-            font-family: 'Courier New', monospace;
         }
-        .api-endpoint .method {
-            color: #667eea;
+        .method {
+            background: #667eea;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
             font-weight: bold;
         }
-        .api-endpoint .url {
-            color: #333;
+        .url {
+            font-family: monospace;
+            background: #e9ecef;
+            padding: 4px 8px;
+            border-radius: 4px;
+            margin-left: 10px;
         }
-        .api-endpoint .description {
+        .description {
+            margin-top: 8px;
             color: #666;
-            font-size: 0.9em;
-            margin-top: 5px;
+            font-size: 14px;
         }
         .python-example {
             background: #2d3748;
             color: #e2e8f0;
-            padding: 20px;
             border-radius: 8px;
+            padding: 20px;
             margin: 15px 0;
             font-family: 'Courier New', monospace;
+            font-size: 14px;
+            line-height: 1.5;
             overflow-x: auto;
         }
-        .python-example .comment {
-            color: #a0aec0;
-        }
         .python-example .keyword {
-            color: #f6ad55;
+            color: #ff6b6b;
         }
         .python-example .string {
-            color: #68d391;
+            color: #51cf66;
         }
-        .python-example .function {
-            color: #63b3ed;
+        .python-example .comment {
+            color: #868e96;
+        }
+        .recording-status {
+            background: rgba(220, 53, 69, 0.1);
+            border: 2px solid #dc3545;
+            border-radius: 10px;
+            padding: 15px;
+            margin: 15px 0;
+            text-align: center;
+            color: #dc3545;
+            font-weight: bold;
+        }
+        .recording-status.recording {
+            background: rgba(220, 53, 69, 0.2);
+            animation: pulse 2s infinite;
         }
     </style>
 </head>
@@ -170,7 +198,7 @@
     <div class="container">
         <div class="header">
             <h1>🎥 Camera Stitching</h1>
-            <p>Static homography stitching with Python API access</p>
+            <p>Real-time camera stitching with automatic recording</p>
         </div>
         
         <div class="controls">
@@ -178,11 +206,15 @@
             <button id="startBtn" class="btn success">▶️ Start Stitching</button>
             <button id="stopBtn" class="btn danger" disabled>⏹️ Stop Stitching</button>
             <button id="resetBtn" class="btn warning">🔄 Reset Homography</button>
-            <a href="/" class="btn">🏠 Back to Home</a>
+        </div>
+        
+        <div class="recording-status" id="recordingStatus" style="display: none;">
+            <span id="recordingText">⏺️ Recording...</span>
+            <div id="recordingTime" style="font-size: 0.9em; margin-top: 5px;">00:00</div>
         </div>
         
         <div class="status">
-            <h3>📊 Status</h3>
+            <h3>📊 System Status</h3>
             <div class="status-item">
                 <span class="status-label">Stitching Enabled:</span>
                 <span id="enabledStatus" class="status-value">❌</span>
@@ -192,11 +224,11 @@
                 <span id="lockedStatus" class="status-value">❌</span>
             </div>
             <div class="status-item">
-                <span class="status-label">Camera 0:</span>
+                <span class="status-label">Camera 0 Available:</span>
                 <span id="camera0Status" class="status-value">❌</span>
             </div>
             <div class="status-item">
-                <span class="status-label">Camera 1:</span>
+                <span class="status-label">Camera 1 Available:</span>
                 <span id="camera1Status" class="status-value">❌</span>
             </div>
         </div>
@@ -268,6 +300,10 @@ status = requests.get(<span class="string">'http://localhost:5000/api/stitch/sta
     
     <script>
         let stitchingEnabled = false;
+        let mediaRecorder = null;
+        let recordedChunks = [];
+        let recordingStartTime = null;
+        let recordingInterval = null;
         
         function updateStatus() {
             fetch('/api/stitch/status')
@@ -282,9 +318,161 @@ status = requests.get(<span class="string">'http://localhost:5000/api/stitch/sta
                     document.getElementById('startBtn').disabled = data.enabled;
                     document.getElementById('stopBtn').disabled = !data.enabled;
                     
+                    // Handle recording based on stitching status
+                    if (data.enabled && !stitchingEnabled) {
+                        // Stitching just started - start recording
+                        startRecording();
+                    } else if (!data.enabled && stitchingEnabled) {
+                        // Stitching just stopped - stop recording
+                        stopRecording();
+                    }
+                    
                     stitchingEnabled = data.enabled;
                 })
                 .catch(error => console.error('Error fetching status:', error));
+        }
+        
+        async function startRecording() {
+            try {
+                // Get the video stream from the img element
+                const videoElement = document.getElementById('video-feed');
+                
+                // Create a canvas to capture frames from the video stream
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                // Set canvas size to match video
+                canvas.width = videoElement.naturalWidth || 1280;
+                canvas.height = videoElement.naturalHeight || 720;
+                
+                // Create a MediaStream from the canvas
+                const stream = canvas.captureStream(30); // 30 FPS
+                
+                // Create MediaRecorder
+                mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'video/webm;codecs=vp9'
+                });
+                
+                recordedChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `stitched_video_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                };
+                
+                // Start recording
+                mediaRecorder.start(1000); // Collect data every second
+                
+                // Start capturing frames from the video element
+                function captureFrame() {
+                    if (videoElement.complete && videoElement.naturalWidth !== 0) {
+                        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+                    }
+                    if (mediaRecorder && mediaRecorder.state === 'recording') {
+                        requestAnimationFrame(captureFrame);
+                    }
+                }
+                captureFrame();
+                
+                // Show recording status
+                document.getElementById('recordingStatus').style.display = 'block';
+                document.getElementById('recordingStatus').classList.add('recording');
+                recordingStartTime = Date.now();
+                
+                // Update recording time
+                recordingInterval = setInterval(() => {
+                    const elapsed = Date.now() - recordingStartTime;
+                    const minutes = Math.floor(elapsed / 60000);
+                    const seconds = Math.floor((elapsed % 60000) / 1000);
+                    document.getElementById('recordingTime').textContent = 
+                        `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                }, 1000);
+                
+                console.log('🎥 Recording started');
+                
+            } catch (error) {
+                console.error('Error starting recording:', error);
+                // Fallback: try to record the page
+                try {
+                    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                    mediaRecorder = new MediaRecorder(stream, {
+                        mimeType: 'video/webm;codecs=vp9'
+                    });
+                    
+                    recordedChunks = [];
+                    
+                    mediaRecorder.ondataavailable = (event) => {
+                        if (event.data.size > 0) {
+                            recordedChunks.push(event.data);
+                        }
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        const blob = new Blob(recordedChunks, { type: 'video/webm' });
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = `stitched_video_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.webm`;
+                        document.body.appendChild(a);
+                        a.click();
+                        document.body.removeChild(a);
+                        URL.revokeObjectURL(blob);
+                    };
+                    
+                    mediaRecorder.start(1000);
+                    
+                    // Show recording status
+                    document.getElementById('recordingStatus').style.display = 'block';
+                    document.getElementById('recordingStatus').classList.add('recording');
+                    recordingStartTime = Date.now();
+                    
+                    // Update recording time
+                    recordingInterval = setInterval(() => {
+                        const elapsed = Date.now() - recordingStartTime;
+                        const minutes = Math.floor(elapsed / 60000);
+                        const seconds = Math.floor((elapsed % 60000) / 1000);
+                        document.getElementById('recordingTime').textContent = 
+                            `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+                    }, 1000);
+                    
+                    console.log('🎥 Recording started (fallback method)');
+                    
+                } catch (fallbackError) {
+                    console.error('Error with fallback recording:', fallbackError);
+                    alert('Could not start recording. Please allow screen sharing if prompted.');
+                }
+            }
+        }
+        
+        function stopRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                
+                // Hide recording status
+                document.getElementById('recordingStatus').style.display = 'none';
+                document.getElementById('recordingStatus').classList.remove('recording');
+                
+                // Clear recording timer
+                if (recordingInterval) {
+                    clearInterval(recordingInterval);
+                    recordingInterval = null;
+                }
+                
+                console.log('⏹️ Recording stopped');
+            }
         }
         
         function startStitching() {
