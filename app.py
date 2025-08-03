@@ -3,18 +3,21 @@ import cv2
 import numpy as np
 import threading
 import time
+from queue import Queue, Empty
 import base64
 
 app = Flask(__name__)
 
-# Global variables to store camera captures
-camera_0 = None
-camera_1 = None
+# Thread-safe queues for communication
+frame_queue_0 = Queue(maxsize=1)
+frame_queue_1 = Queue(maxsize=1)
+stitched_frame_queue = Queue(maxsize=1)
 
-# Stitching variables
+# Global flags for control
 stitch_homography = None
 stitch_locked = False
 stitch_enabled = False
+running = True
 
 def get_camera_feed(camera_index):
     """Get camera feed for the specified camera index"""
@@ -25,8 +28,8 @@ def get_camera_feed(camera_index):
     
     # Set camera properties for 60 FPS
     cap.set(cv2.CAP_PROP_FPS, 60)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1920)  # Full HD width
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 1080)  # Full HD height
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)  # Lower resolution for better performance
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)   # Better starting point for 60 FPS
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Minimize buffer for lower latency
     
     # Try to get the actual FPS to verify
@@ -35,42 +38,85 @@ def get_camera_feed(camera_index):
     
     return cap
 
-def generate_frames(camera_index):
-    """Generate frames from camera feed"""
-    global camera_0, camera_1
-    
-    # Get the appropriate camera
-    if camera_index == 0:
-        if camera_0 is None:
-            camera_0 = get_camera_feed(0)
-        cap = camera_0
-    elif camera_index == 1:
-        if camera_1 is None:
-            camera_1 = get_camera_feed(1)
-        cap = camera_1
-    else:
-        return
-    
+def capture_frames(camera_index, frame_queue):
+    """Producer: Captures frames and puts them in a queue."""
+    cap = get_camera_feed(camera_index)
     if cap is None:
         return
-    
-    # Optimize JPEG encoding for speed
-    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 85]  # Good quality, fast encoding
-    
-    while True:
+
+    while running:
         success, frame = cap.read()
         if not success:
-            print(f"Error reading from camera {camera_index}")
-            break
-        
-        # Encode the frame as JPEG with optimized settings
-        ret, buffer = cv2.imencode('.jpg', frame, encode_params)
-        if not ret:
+            print(f"Error reading from camera {camera_index}, retrying...")
+            time.sleep(1)
             continue
         
-        # Yield the frame in bytes
-        yield (b'--frame\r\n'
-               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        try:
+            # Empty the queue if it's full to always get the latest frame
+            frame_queue.get_nowait()
+        except Empty:
+            pass
+        
+        frame_queue.put(frame)
+    cap.release()
+
+def process_and_stitch_frames():
+    """Consumer/Producer: Takes frames, stitches them, and puts the result in a queue."""
+    global stitch_homography, stitch_locked, stitch_enabled
+
+    while running:
+        if not stitch_enabled:
+            time.sleep(0.1)
+            continue
+            
+        try:
+            # Use get_nowait() to avoid blocking if a frame is not ready
+            frame1 = frame_queue_0.get_nowait()
+            frame2 = frame_queue_1.get_nowait()
+
+            # Resize frames for consistent processing
+            frame1_resized = cv2.resize(frame1, (640, 480))
+            frame2_resized = cv2.resize(frame2, (640, 480))
+            
+            # Compute homography once if not locked
+            if not stitch_locked and stitch_homography is None:
+                print("🔍 Computing homography...")
+                stitch_homography = compute_homography(frame1_resized, frame2_resized)
+                if stitch_homography is not None:
+                    stitch_locked = True
+                    print("🔒 Homography locked!")
+                else:
+                    print("❌ Failed to compute homography")
+            
+            # Stitch images
+            if stitch_homography is not None:
+                panorama = stitch_images(frame1_resized, frame2_resized, stitch_homography)
+            else:
+                panorama = np.hstack([frame1_resized, frame2_resized])
+            
+            try:
+                stitched_frame_queue.get_nowait()
+            except Empty:
+                pass
+            
+            stitched_frame_queue.put(panorama)
+
+        except Empty:
+            # One of the queues was empty, wait a bit and try again
+            time.sleep(0.001)
+
+def encode_and_yield_frames(frame_queue):
+    """Consumer: Encodes frames from a queue and yields them for the web server."""
+    encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+    while running:
+        try:
+            frame = frame_queue.get_nowait()
+            ret, buffer = cv2.imencode('.jpg', frame, encode_params)
+            if ret:
+                yield (b'--frame\r\n'
+                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+        except Empty:
+            time.sleep(0.01) # Wait briefly before trying again
 
 def compute_homography(img1, img2):
     """Compute homography between two images using ORB features"""
@@ -124,51 +170,6 @@ def stitch_images(img1, img2, homography):
     
     return panorama
 
-def generate_stitched_frames():
-    """Generate stitched video frames"""
-    global stitch_homography, stitch_locked, stitch_enabled
-    
-    while True:
-        if not stitch_enabled or camera_0 is None or camera_1 is None:
-            time.sleep(0.1)
-            continue
-        
-        # Read frames from both cameras
-        ret1, frame1 = camera_0.read()
-        ret2, frame2 = camera_1.read()
-        
-        if not ret1 or not ret2:
-            continue
-        
-        # Resize frames for consistent processing
-        frame1 = cv2.resize(frame1, (640, 480))
-        frame2 = cv2.resize(frame2, (640, 480))
-        
-        # Compute homography once if not locked
-        if not stitch_locked and stitch_homography is None:
-            print("🔍 Computing homography for static cameras...")
-            stitch_homography = compute_homography(frame1, frame2)
-            if stitch_homography is not None:
-                stitch_locked = True
-                print("🔒 Homography locked for static cameras!")
-            else:
-                print("❌ Failed to compute homography")
-        
-        # Stitch images
-        if stitch_homography is not None:
-            panorama = stitch_images(frame1, frame2, stitch_homography)
-        else:
-            panorama = np.hstack([frame1, frame2])
-        
-        # Encode frame
-        ret, buffer = cv2.imencode('.jpg', panorama, [cv2.IMWRITE_JPEG_QUALITY, 85])
-        if ret:
-            frame = buffer.tobytes()
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
-        
-        # time.sleep(0.016)  # ~60 FPS
-
 @app.route('/')
 def index():
     """Main page with links to camera streams"""
@@ -187,25 +188,25 @@ def camera1_page():
 @app.route('/video_feed0')
 def video_feed0():
     """Video streaming route for camera 0"""
-    return Response(generate_frames(0),
+    return Response(encode_and_yield_frames(frame_queue_0),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/video_feed1')
 def video_feed1():
     """Video streaming route for camera 1"""
-    return Response(generate_frames(1),
+    return Response(encode_and_yield_frames(frame_queue_1),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/camera0/stream')
 def api_camera0_stream():
     """API endpoint for camera 0 stream"""
-    return Response(generate_frames(0),
+    return Response(encode_and_yield_frames(frame_queue_0),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/camera1/stream')
 def api_camera1_stream():
     """API endpoint for camera 1 stream"""
-    return Response(generate_frames(1),
+    return Response(encode_and_yield_frames(frame_queue_1),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/stitching')
@@ -216,16 +217,13 @@ def stitching_page():
 @app.route('/api/stitched/stream')
 def api_stitched_stream():
     """API endpoint for stitched camera stream"""
-    return Response(generate_stitched_frames(),
+    return Response(encode_and_yield_frames(stitched_frame_queue),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 @app.route('/api/stitch/start', methods=['POST'])
 def start_stitching():
     """Start camera stitching"""
     global stitch_enabled, stitch_locked, stitch_homography
-    
-    if camera_0 is None or camera_1 is None:
-        return jsonify({'error': 'Both cameras must be available'}), 400
     
     stitch_enabled = True
     stitch_locked = False
@@ -260,8 +258,8 @@ def get_stitch_status():
         'enabled': stitch_enabled,
         'locked': stitch_locked,
         'homography_computed': stitch_homography is not None,
-        'camera_0_available': camera_0 is not None,
-        'camera_1_available': camera_1 is not None
+        'camera_0_available': not frame_queue_0.empty(),
+        'camera_1_available': not frame_queue_1.empty()
     })
 
 @app.route('/api/frame/stitched')
@@ -269,33 +267,32 @@ def get_stitched_frame():
     """Get a single stitched frame as base64 for Python code"""
     global stitch_homography, stitch_locked
     
-    if not stitch_enabled or camera_0 is None or camera_1 is None:
-        return jsonify({'error': 'Stitching not available'}), 400
+    if not stitch_enabled:
+        return jsonify({'error': 'Stitching not enabled'}), 400
     
-    # Read frames from both cameras
-    ret1, frame1 = camera_0.read()
-    ret2, frame2 = camera_1.read()
-    
-    if not ret1 or not ret2:
-        return jsonify({'error': 'Failed to read camera frames'}), 400
+    try:
+        frame1 = frame_queue_0.get_nowait()
+        frame2 = frame_queue_1.get_nowait()
+    except Empty:
+        return jsonify({'error': 'Camera frames not available'}), 400
     
     # Resize frames for consistent processing
-    frame1 = cv2.resize(frame1, (640, 480))
-    frame2 = cv2.resize(frame2, (640, 480))
+    frame1_resized = cv2.resize(frame1, (640, 480))
+    frame2_resized = cv2.resize(frame2, (640, 480))
     
     # Compute homography once if not locked
     if not stitch_locked and stitch_homography is None:
         print("🔍 Computing homography for static cameras...")
-        stitch_homography = compute_homography(frame1, frame2)
+        stitch_homography = compute_homography(frame1_resized, frame2_resized)
         if stitch_homography is not None:
             stitch_locked = True
             print("🔒 Homography locked for static cameras!")
     
     # Stitch images
     if stitch_homography is not None:
-        panorama = stitch_images(frame1, frame2, stitch_homography)
+        panorama = stitch_images(frame1_resized, frame2_resized, stitch_homography)
     else:
-        panorama = np.hstack([frame1, frame2])
+        panorama = np.hstack([frame1_resized, frame2_resized])
     
     # Encode to base64
     ret, buffer = cv2.imencode('.jpg', panorama, [cv2.IMWRITE_JPEG_QUALITY, 85])
@@ -311,16 +308,16 @@ def get_stitched_frame():
         return jsonify({'error': 'Failed to encode frame'}), 500
 
 if __name__ == '__main__':
-    # Initialize cameras
-    camera_0 = get_camera_feed(0)
-    camera_1 = get_camera_feed(1)
+    # Start the camera capture threads
+    capture_thread_0 = threading.Thread(target=capture_frames, args=(0, frame_queue_0), daemon=True)
+    capture_thread_1 = threading.Thread(target=capture_frames, args=(1, frame_queue_1), daemon=True)
+    stitch_thread = threading.Thread(target=process_and_stitch_frames, daemon=True)
     
-    if camera_0 is None:
-        print("Warning: Camera 0 not available")
-    if camera_1 is None:
-        print("Warning: Camera 1 not available")
-    
-    print("Starting Flask server...")
+    capture_thread_0.start()
+    capture_thread_1.start()
+    stitch_thread.start()
+
+    print("Starting Flask server with multithreaded architecture...")
     print("Available routes:")
     print("- /camera0 - Camera 0 stream page")
     print("- /camera1 - Camera 1 stream page")
@@ -329,7 +326,13 @@ if __name__ == '__main__':
     print("- /api/camera1/stream - Camera 1 API endpoint")
     print("- /api/stitched/stream - Stitched camera stream")
     print("- /api/frame/stitched - Single stitched frame (for Python code)")
-    print("\nOptimized for 60 FPS streaming with minimal latency")
+    print("\nOptimized for 60 FPS streaming with producer-consumer architecture")
     
-    # Run with threaded=True for better performance with multiple camera streams
-    app.run(debug=False, host='0.0.0.0', port=5000, threaded=True) 
+    try:
+        # Run with threaded=True for better performance with multiple camera streams
+        app.run(debug=False, host='0.0.0.0', port=5000, threaded=True)
+    finally:
+        running = False  # Stop all threads on exit
+        capture_thread_0.join()
+        capture_thread_1.join()
+        stitch_thread.join() 
